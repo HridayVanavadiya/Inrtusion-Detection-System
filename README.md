@@ -9,17 +9,25 @@ A custom dataset was created in a controlled laboratory environment by generatin
 
 🧪 Experimental Setup
 Attacker Machine: Kali Linux
+
 Target System: Windows Server
+
 Traffic Capture: Wireshark
+
 Feature Extraction: CICFlowMeter (flow-based features)
 
 📊 Dataset Description
 The dataset used in this project is self-generated and consists of approximately 16,000+ network flows with 79 numerical flow-based features after preprocessing.
 Traffic Classes
+
 Normal Traffic: Legitimate network activity generated under normal usage conditions
+
 Probe Attack: Network reconnaissance attacks generated using multi-phase Nmap scans
+
 DoS Attack: Denial-of-Service attacks including TCP SYN flood, UDP flood, and ICMP flood
+
 Brute Force Attack: Repeated authentication-like connection attempts simulating credential attacks
+
 The dataset is preprocessed by removing identifier fields, handling missing and infinite values, encoding labels, and applying feature scaling.
 
 🤖 Machine Learning Models
