@@ -44,8 +44,8 @@ A custom dataset was created in a controlled laboratory environment by generatin
 4. Strong experimental results with overfitting analysis
 5. Designed for academic research and educational purposes
 
-🔮 Future Work
-Integration of Explainable AI (SHAP) for model interpretability
-Evaluation in more diverse and real-world network environments
-Extension to multi-class and zero-day attack detection
-Real-time deployment using streaming network data
+# Future Work
+1. Integration of Explainable AI (SHAP) for model interpretability
+2. Evaluation in more diverse and real-world network environments
+3. Extension to multi-class and zero-day attack detection
+4. Real-time deployment using streaming network data
