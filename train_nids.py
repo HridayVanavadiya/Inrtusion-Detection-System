@@ -120,11 +120,11 @@ def train_eval_lstm(X_train, X_test, y_train, y_test, class_names):
     X_test_reshaped = X_test.reshape((X_test.shape[0], 1, X_test.shape[1]))
     
     model = create_lstm_model((X_train_reshaped.shape[1], X_train_reshaped.shape[2]), len(class_names))
-    model.summary()
+    # model.summary()
     
-    model.fit(X_train_reshaped, y_train, epochs=15, batch_size=32, validation_split=0.1, verbose=1)
+    model.fit(X_train_reshaped, y_train, epochs=15, batch_size=32, validation_split=0.1, verbose=0)
     
-    y_pred_prob = model.predict(X_test_reshaped)
+    y_pred_prob = model.predict(X_test_reshaped, verbose=0)
     y_pred = np.argmax(y_pred_prob, axis=1)
     
     print_metrics("LSTM", y_test, y_pred, class_names)
@@ -179,11 +179,11 @@ def train_eval_transformer(X_train, X_test, y_train, y_test, class_names):
     X_test_reshaped = X_test.reshape((X_test.shape[0], 1, X_test.shape[1]))
     
     model = create_transformer_model((X_train_reshaped.shape[1], X_train_reshaped.shape[2]), len(class_names))
-    model.summary()
+    # model.summary()
     
-    model.fit(X_train_reshaped, y_train, epochs=15, batch_size=32, validation_split=0.1, verbose=1)
+    model.fit(X_train_reshaped, y_train, epochs=15, batch_size=32, validation_split=0.1, verbose=0)
     
-    y_pred_prob = model.predict(X_test_reshaped)
+    y_pred_prob = model.predict(X_test_reshaped, verbose=0)
     y_pred = np.argmax(y_pred_prob, axis=1)
     
     print_metrics("Transformer", y_test, y_pred, class_names)
