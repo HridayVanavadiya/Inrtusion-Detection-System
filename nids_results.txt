@@ -54,29 +54,7 @@ Confusion Matrix:
 --- LSTM ---
 
 Results for LSTM:
-Accuracy: 0.9963
-Classification Report:
-                    precision    recall  f1-score   support
-
-Brute Force Attack       0.99      1.00      1.00       959
-        DoS Attack       1.00      1.00      1.00       958
-    Normal Traffic       1.00      0.99      0.99       599
-      Probe Attack       0.99      0.99      0.99       724
-
-          accuracy                           1.00      3240
-         macro avg       1.00      1.00      1.00      3240
-      weighted avg       1.00      1.00      1.00      3240
-
-Confusion Matrix:
-[[958   0   0   1]
- [  0 958   0   0]
- [  1   0 593   5]
- [  4   0   1 719]]
-
---- Transformer ---
-
-Results for Transformer:
-Accuracy: 0.9963
+Accuracy: 0.9966
 Classification Report:
                     precision    recall  f1-score   support
 
@@ -90,7 +68,29 @@ Brute Force Attack       0.99      1.00      1.00       959
       weighted avg       1.00      1.00      1.00      3240
 
 Confusion Matrix:
-[[957   0   0   2]
+[[958   0   0   1]
  [  0 958   0   0]
- [  1   0 594   4]
+ [  0   0 594   5]
  [  5   0   0 719]]
+
+--- Transformer ---
+
+Results for Transformer:
+Accuracy: 0.9948
+Classification Report:
+                    precision    recall  f1-score   support
+
+Brute Force Attack       0.99      1.00      0.99       959
+        DoS Attack       1.00      1.00      1.00       958
+    Normal Traffic       1.00      0.99      1.00       599
+      Probe Attack       0.99      0.99      0.99       724
+
+          accuracy                           0.99      3240
+         macro avg       1.00      0.99      0.99      3240
+      weighted avg       0.99      0.99      0.99      3240
+
+Confusion Matrix:
+[[956   0   0   3]
+ [  0 958   0   0]
+ [  2   0 594   3]
+ [  9   0   0 715]]
