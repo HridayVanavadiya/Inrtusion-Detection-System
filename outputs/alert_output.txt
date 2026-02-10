@@ -1,0 +1,29 @@
+==================================================
+  NETWORK INTRUSION DETECTION ALERT  
+==================================================
+
+Detected Traffic Type: Normal Traffic
+
+--- Attack Explanation ---
+
+Description:
+Legitimate network traffic.
+
+What is happening:
+- Standard user activity or background system processes.
+- No malicious patterns detected.
+
+What to do:
+- No action required.
+- Continue monitoring as usual.
+
+What NOT to do:
+- Do not block this traffic or raise alarms.
+
+--- Risk Assessment ---
+
+Model Confidence: 69.5%
+Risk Level: Low
+Priority: Info
+Recommended Action: Continue standard monitoring. No immediate action required.
+==================================================
