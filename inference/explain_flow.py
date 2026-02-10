@@ -10,6 +10,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import train_nids
 from explainability.attack_explainer import explain_attack
+from explainability.risk_assessor import assess_risk
 
 # --- Configuration ---
 # Use the dataset found in the current environment
@@ -108,29 +109,49 @@ def main():
     print(f"Processing single flow from {SINGLE_FLOW_INPUT}...")
     X_single_scaled = preprocess_single_flow(SINGLE_FLOW_INPUT, scaler, feature_names)
     
-    # 4. Predict
-    prediction_idx = model.predict(X_single_scaled)[0]
+    # 4. Predict with confidence
+    probabilities = model.predict_proba(X_single_scaled)[0]
+    prediction_idx = probabilities.argmax()
     predicted_class = class_names[prediction_idx]
+    confidence_score = probabilities.max() * 100  # Convert to percentage
     
-    # 5. Explain and Output
+    # 5. Assess Risk (post-prediction decision-support layer)
+    risk_assessment = assess_risk(predicted_class, confidence_score)
+    
+    # 6. Explain Attack (existing logic)
     explanation = explain_attack(predicted_class)
     
-    print("\n" + "="*40)
-    print(f"Detected Traffic Type: {predicted_class}")
-    print("="*40)
+    # 7. Output
+    output_lines = []
+    output_lines.append("=" * 50)
+    output_lines.append("  NETWORK INTRUSION DETECTION ALERT  ")
+    output_lines.append("=" * 50)
+    output_lines.append(f"\nDetected Traffic Type: {predicted_class}")
     
-    print("\nDescription:")
-    print(explanation['description'])
+    output_lines.append("\n--- Attack Explanation ---")
+    output_lines.append(f"\nDescription:\n{explanation['description']}")
+    output_lines.append(f"\nWhat is happening:\n{explanation['happening']}")
+    output_lines.append(f"\nWhat to do:\n{explanation['to_do']}")
+    output_lines.append(f"\nWhat NOT to do:\n{explanation['not_to_do']}")
     
-    print("\nWhat is happening:")
-    print(explanation['happening'])
+    output_lines.append("\n--- Risk Assessment ---")
+    output_lines.append(f"\nModel Confidence: {risk_assessment['confidence']:.1f}%")
+    output_lines.append(f"Risk Level: {risk_assessment['risk_level']}")
+    output_lines.append(f"Priority: {risk_assessment['priority']}")
+    output_lines.append(f"Recommended Action: {risk_assessment['recommended_action']}")
+    output_lines.append("=" * 50)
     
-    print("\nWhat to do:")
-    print(explanation['to_do'])
+    # Print to console
+    output_text = "\n".join(output_lines)
+    print("\n" + output_text)
     
-    print("\nWhat NOT to do:")
-    print(explanation['not_to_do'])
-    print("="*40)
+    # Save to file
+    output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'outputs'))
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, 'alert_output.txt')
+    with open(output_file, 'w') as f:
+        f.write(output_text)
+    print(f"\nOutput saved to: {output_file}")
 
 if __name__ == "__main__":
     main()
