@@ -11,6 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import train_nids
 from explainability.attack_explainer import explain_attack
 from explainability.risk_assessor import assess_risk
+from explainability.anomaly_detector import train_anomaly_detector, compute_anomaly_score
 
 # --- Configuration ---
 # Use the dataset found in the current environment
@@ -96,7 +97,10 @@ def main():
         
     X_train, X_test, y_train, y_test, class_names, scaler, feature_names = get_data_and_scaler(dataset_path)
     
-    # 2. Get Trained Model
+    # 2. Train Anomaly Detector (Isolation Forest on Normal Traffic)
+    anomaly_model = train_anomaly_detector(X_train, y_train, class_names)
+    
+    # 3. Get Trained Model
     # Per requirement (d), use Random Forest model
     print("\nTraining Random Forest model for inference...")
     model = train_nids.train_eval_rf(X_train, X_test, y_train, y_test, class_names)
@@ -109,19 +113,36 @@ def main():
     print(f"Processing single flow from {SINGLE_FLOW_INPUT}...")
     X_single_scaled = preprocess_single_flow(SINGLE_FLOW_INPUT, scaler, feature_names)
     
-    # 4. Predict with confidence
+    # 5. Predict with confidence
     probabilities = model.predict_proba(X_single_scaled)[0]
     prediction_idx = probabilities.argmax()
     predicted_class = class_names[prediction_idx]
     confidence_score = probabilities.max() * 100  # Convert to percentage
     
-    # 5. Assess Risk (post-prediction decision-support layer)
+    # 6. Anomaly Detection (post-prediction novelty detection layer)
+    anomaly_result = compute_anomaly_score(anomaly_model, X_single_scaled)
+    is_anomaly = anomaly_result["is_anomaly"]
+    anomaly_score = anomaly_result["anomaly_score"]
+    anomaly_status = "Anomalous" if is_anomaly else "Normal"
+    
+    # 7. Novelty Detection Decision Logic
+    # Combines classifier confidence with anomaly detection for robust decision
+    if confidence_score < 70.0 and is_anomaly:
+        final_decision = "Unknown / Suspicious Traffic"
+    elif confidence_score < 70.0:
+        final_decision = "Low Confidence Prediction"
+    elif is_anomaly:
+        final_decision = "Possible Novel Behaviour"
+    else:
+        final_decision = predicted_class  # Normal predicted class
+    
+    # 8. Assess Risk (post-prediction decision-support layer)
     risk_assessment = assess_risk(predicted_class, confidence_score)
     
-    # 6. Explain Attack (existing logic)
+    # 9. Explain Attack (existing logic)
     explanation = explain_attack(predicted_class)
     
-    # 7. Output
+    # 10. Output
     output_lines = []
     output_lines.append("=" * 50)
     output_lines.append("  NETWORK INTRUSION DETECTION ALERT  ")
@@ -139,6 +160,12 @@ def main():
     output_lines.append(f"Risk Level: {risk_assessment['risk_level']}")
     output_lines.append(f"Priority: {risk_assessment['priority']}")
     output_lines.append(f"Recommended Action: {risk_assessment['recommended_action']}")
+    
+    output_lines.append("\n--- Novelty Detection ---")
+    output_lines.append(f"\nModel Confidence: {confidence_score:.1f}%")
+    output_lines.append(f"Anomaly Status: {anomaly_status}")
+    output_lines.append(f"Anomaly Score: {anomaly_score:.4f}")
+    output_lines.append(f"Final Decision: {final_decision}")
     output_lines.append("=" * 50)
     
     # Print to console
