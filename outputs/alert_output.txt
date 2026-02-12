@@ -26,4 +26,11 @@ Model Confidence: 69.5%
 Risk Level: Low
 Priority: Info
 Recommended Action: Continue standard monitoring. No immediate action required.
+
+--- Novelty Detection ---
+
+Model Confidence: 69.5%
+Anomaly Status: Normal
+Anomaly Score: 0.1213
+Final Decision: Low Confidence Prediction
 ==================================================
