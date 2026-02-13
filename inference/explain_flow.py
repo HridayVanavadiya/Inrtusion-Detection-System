@@ -4,6 +4,9 @@ import numpy as np
 import os
 import sys
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import accuracy_score
 
 # Add parent directory to path to import train_nids and explainability
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -16,7 +19,7 @@ from explainability.anomaly_detector import train_anomaly_detector, compute_anom
 # --- Configuration ---
 # Use the dataset found in the current environment
 WORKSPACE_DATASET = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Dataset', 'NIDS_FINAL_DATASET.csv'))
-SINGLE_FLOW_INPUT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'single_flow.csv'))
+SINGLE_FLOW_INPUT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'probe_flow.csv'))
 
 def get_data_and_scaler(filepath):
     """
@@ -100,32 +103,57 @@ def main():
     # 2. Train Anomaly Detector (Isolation Forest on Normal Traffic)
     anomaly_model = train_anomaly_detector(X_train, y_train, class_names)
     
-    # 3. Get Trained Model
-    # Per requirement (d), use Random Forest model
-    print("\nTraining Random Forest model for inference...")
-    model = train_nids.train_eval_rf(X_train, X_test, y_train, y_test, class_names)
+    # 3. Train Random Forest with increased stability (n_estimators=500)
+    print("\nTraining Random Forest model (n_estimators=500) for inference...")
+    rf_raw = RandomForestClassifier(n_estimators=500, random_state=42)
+    rf_raw.fit(X_train, y_train)
     
-    # 3. Accept Single Flow Input
+    # 4. Calibrate probabilities using isotonic regression (5-fold CV)
+    print("Calibrating probabilities with CalibratedClassifierCV (isotonic)...")
+    calibrated_model = CalibratedClassifierCV(rf_raw, method='isotonic', cv=5)
+    calibrated_model.fit(X_train, y_train)
+    
+    # Validate: compare raw vs calibrated accuracy on test set
+    raw_preds = rf_raw.predict(X_test)
+    cal_preds = calibrated_model.predict(X_test)
+    raw_accuracy = accuracy_score(y_test, raw_preds)
+    cal_accuracy = accuracy_score(y_test, cal_preds)
+    print(f"\nRaw RF Accuracy:        {raw_accuracy:.4f}")
+    print(f"Calibrated RF Accuracy: {cal_accuracy:.4f}")
+    
+    # 5. Accept Single Flow Input
     if not os.path.exists(SINGLE_FLOW_INPUT):
         print(f"Error: Single flow file not found at {SINGLE_FLOW_INPUT}")
         return
         
-    print(f"Processing single flow from {SINGLE_FLOW_INPUT}...")
+    print(f"\nProcessing single flow from {SINGLE_FLOW_INPUT}...")
     X_single_scaled = preprocess_single_flow(SINGLE_FLOW_INPUT, scaler, feature_names)
     
-    # 5. Predict with confidence
-    probabilities = model.predict_proba(X_single_scaled)[0]
-    prediction_idx = probabilities.argmax()
-    predicted_class = class_names[prediction_idx]
-    confidence_score = probabilities.max() * 100  # Convert to percentage
+    # 6. Predict with dual probability capture (raw vs calibrated)
+    raw_probs = rf_raw.predict_proba(X_single_scaled)[0]
+    raw_confidence = raw_probs.max() * 100
     
-    # 6. Anomaly Detection (post-prediction novelty detection layer)
+    cal_probs = calibrated_model.predict_proba(X_single_scaled)[0]
+    prediction_idx = cal_probs.argmax()
+    predicted_class = class_names[prediction_idx]
+    confidence_score = cal_probs.max() * 100  # Calibrated confidence
+    
+    # 7. Confidence level interpretation
+    if confidence_score >= 85.0:
+        confidence_level = "High"
+    elif confidence_score >= 70.0:
+        confidence_level = "Medium"
+    else:
+        confidence_level = "Low"
+    
+    # 8. Anomaly Detection (post-prediction novelty detection layer)
     anomaly_result = compute_anomaly_score(anomaly_model, X_single_scaled)
     is_anomaly = anomaly_result["is_anomaly"]
     anomaly_score = anomaly_result["anomaly_score"]
     anomaly_status = "Anomalous" if is_anomaly else "Normal"
     
-    # 7. Novelty Detection Decision Logic
+
+    # 9. Novelty Detection Decision Logic
     # Combines classifier confidence with anomaly detection for robust decision
     if confidence_score < 70.0 and is_anomaly:
         final_decision = "Unknown / Suspicious Traffic"
@@ -136,13 +164,13 @@ def main():
     else:
         final_decision = predicted_class  # Normal predicted class
     
-    # 8. Assess Risk (post-prediction decision-support layer)
+    # 10. Assess Risk (post-prediction decision-support layer)
     risk_assessment = assess_risk(predicted_class, confidence_score)
     
-    # 9. Explain Attack (existing logic)
+    # 11. Explain Attack (existing logic)
     explanation = explain_attack(predicted_class)
     
-    # 10. Output
+    # 12. Output
     output_lines = []
     output_lines.append("=" * 50)
     output_lines.append("  NETWORK INTRUSION DETECTION ALERT  ")
@@ -160,6 +188,18 @@ def main():
     output_lines.append(f"Risk Level: {risk_assessment['risk_level']}")
     output_lines.append(f"Priority: {risk_assessment['priority']}")
     output_lines.append(f"Recommended Action: {risk_assessment['recommended_action']}")
+    
+    output_lines.append("\n--- Confidence Diagnostics ---")
+    output_lines.append("\nClass Probabilities (Calibrated):")
+    for i, cls_name in enumerate(class_names):
+        output_lines.append(f"  {cls_name}: {cal_probs[i] * 100:.1f}%")
+    output_lines.append(f"\nRaw Confidence (before calibration): {raw_confidence:.1f}%")
+    output_lines.append(f"Calibrated Confidence: {confidence_score:.1f}%")
+    output_lines.append(f"Confidence Level: {confidence_level}")
+    
+    output_lines.append("\n--- Calibration Validation ---")
+    output_lines.append(f"\nRaw RF Test Accuracy:        {raw_accuracy:.4f}")
+    output_lines.append(f"Calibrated RF Test Accuracy: {cal_accuracy:.4f}")
     
     output_lines.append("\n--- Novelty Detection ---")
     output_lines.append(f"\nModel Confidence: {confidence_score:.1f}%")

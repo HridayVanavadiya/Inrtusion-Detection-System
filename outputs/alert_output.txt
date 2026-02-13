@@ -2,35 +2,53 @@
   NETWORK INTRUSION DETECTION ALERT  
 ==================================================
 
-Detected Traffic Type: Normal Traffic
+Detected Traffic Type: Probe Attack
 
 --- Attack Explanation ---
 
 Description:
-Legitimate network traffic.
+A Probe attack (or surveillance) involves scanning a network to identify valid IP addresses, open ports, and operating systems.
 
 What is happening:
-- Standard user activity or background system processes.
-- No malicious patterns detected.
+- Sequential or random connection attempts to multiple ports.
+- Mapping of network topology and services.
 
 What to do:
-- No action required.
-- Continue monitoring as usual.
+- Block the source IP if scanning is aggressive.
+- Review firewall rules to ensure only necessary ports are open.
+- Check for subsequent unauthorized access attempts.
 
 What NOT to do:
-- Do not block this traffic or raise alarms.
+- Do not expose sensitive services to the public internet unnecessarily.
 
 --- Risk Assessment ---
 
-Model Confidence: 69.5%
-Risk Level: Low
-Priority: Info
-Recommended Action: Continue standard monitoring. No immediate action required.
+Model Confidence: 94.2%
+Risk Level: Medium
+Priority: Warning
+Recommended Action: Increase monitoring frequency. Review logs within 24 hours.
+
+--- Confidence Diagnostics ---
+
+Class Probabilities (Calibrated):
+  Brute Force Attack: 1.2%
+  DoS Attack: 0.0%
+  Normal Traffic: 4.6%
+  Probe Attack: 94.2%
+
+Raw Confidence (before calibration): 89.8%
+Calibrated Confidence: 94.2%
+Confidence Level: High
+
+--- Calibration Validation ---
+
+Raw RF Test Accuracy:        0.9966
+Calibrated RF Test Accuracy: 0.9975
 
 --- Novelty Detection ---
 
-Model Confidence: 69.5%
+Model Confidence: 94.2%
 Anomaly Status: Normal
-Anomaly Score: 0.1213
-Final Decision: Low Confidence Prediction
+Anomaly Score: 0.1399
+Final Decision: Probe Attack
 ==================================================
