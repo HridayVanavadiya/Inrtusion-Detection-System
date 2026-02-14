@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import os
 import sys
+import joblib
+from datetime import datetime
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.calibration import CalibratedClassifierCV
@@ -63,162 +65,220 @@ def get_data_and_scaler(filepath):
     
     return X_train_scaled, X_test_scaled, y_train, y_test, class_names, scaler, feature_names
 
+def load_artifacts(artifacts_dir):
+    """Load all necessary artifacts for inference."""
+    try:
+        print(f"Loading artifacts from {artifacts_dir}...")
+        scaler = joblib.load(os.path.join(artifacts_dir, 'scaler.pkl'))
+        le = joblib.load(os.path.join(artifacts_dir, 'label_encoder.pkl'))
+        rf_model = joblib.load(os.path.join(artifacts_dir, 'rf_model.pkl'))
+        anomaly_detector = joblib.load(os.path.join(artifacts_dir, 'anomaly_detector.pkl'))
+        feature_names = joblib.load(os.path.join(artifacts_dir, 'feature_names.pkl'))
+        return scaler, le, rf_model, anomaly_detector, feature_names
+    except FileNotFoundError as e:
+        print(f"Error loading artifacts: {e}")
+        print("Please run train_nids.py first to generate artifacts.")
+        sys.exit(1)
+
 def preprocess_single_flow(filepath, scaler, feature_names):
     """
     Correctly preprocesses a single flow input to match training features.
+    Includes robust validation and handling for missing features.
     """
-    df = pd.read_csv(filepath)
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Input file not found: {filepath}")
+        
+    try:
+        df = pd.read_csv(filepath)
+    except Exception as e:
+        raise ValueError(f"Failed to read CSV file: {e}")
+        
+    if df.empty:
+        raise ValueError("Input CSV file is empty.")
+        
     df.columns = df.columns.str.strip()
     
-    # identifier columns to drop
+    # identifier columns to drop (just for cleanup, though reindex handles selection)
     columns_to_drop = ['Flow ID', 'Src IP', 'Dst IP', 'Timestamp', '__source_file', 'Label']
     existing_drop = [c for c in columns_to_drop if c in df.columns]
     df_clean = df.drop(columns=existing_drop)
     
-    # Match the numeric-only and exact feature order from training
-    # Instead of select_dtypes, we reorder based on 'feature_names' from training
-    # and handle missing columns if any
-    X_single = df_clean.reindex(columns=feature_names)
+    # Validate features
+    missing_features = [col for col in feature_names if col not in df_clean.columns]
+    if missing_features:
+        print(f"[WARNING] Input is missing {len(missing_features)} features expected by the model.")
+        limit = min(len(missing_features), 5)
+        missing_sample = [missing_features[i] for i in range(limit)]
+        print(f"Missing: {missing_sample}...")
+        # We will fill them with 0s via reindex
+        
+    # Reindex to ensure exact feature order and presence
+    # fill_value=0 assumes missing features (like flags or counters) are likely 0 in partial data
+    X_single = df_clean.reindex(columns=feature_names, fill_value=0)
     
-    # Handle missing/infinite values (impute with 0 or mean if we had it, but 0 is safe for single flow if training was clean)
-    # Re-impute with a "safe" value if NaN in single flow
+    # Handle infinite values
     X_single = X_single.replace([np.inf, -np.inf], np.nan)
-    X_single = X_single.fillna(0) # Basic imputation for single flow
     
-    # Scale
-    X_single_scaled = scaler.transform(X_single)
+    # Handle missing values (NaN)
+    if X_single.isnull().values.any():
+        # print("Imputing missing values with 0...")
+        X_single = X_single.fillna(0)
+    
+    # Scale features using the loaded scaler
+    try:
+        X_single_scaled = scaler.transform(X_single)
+    except Exception as e:
+        raise RuntimeError(f"Scaling failed: {e}")
     
     return X_single_scaled
 
 def main():
-    # 1. Setup Data and Scaler
-    # Use workspace dataset path if possible
-    dataset_path = WORKSPACE_DATASET
-    if not os.path.exists(dataset_path):
-        # Fallback to train_nids.DATASET_PATH if workspace one isn't found
-        dataset_path = train_nids.DATASET_PATH
+    try:
+        # 1. Setup paths
+        dataset_path = WORKSPACE_DATASET # Only used for fallback if needed, but we rely on artifacts now
+        artifacts_dir = "artifacts"
+        if not os.path.exists(artifacts_dir):
+            # Try looking in parent directory just in case
+            artifacts_dir = os.path.join('..', 'artifacts')
+            
+        output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'outputs'))
+        os.makedirs(output_dir, exist_ok=True)
         
-    X_train, X_test, y_train, y_test, class_names, scaler, feature_names = get_data_and_scaler(dataset_path)
-    
-    # 2. Train Anomaly Detector (Isolation Forest on Normal Traffic)
-    anomaly_model = train_anomaly_detector(X_train, y_train, class_names)
-    
-    # 3. Train Random Forest with increased stability (n_estimators=500)
-    print("\nTraining Random Forest model (n_estimators=500) for inference...")
-    rf_raw = RandomForestClassifier(n_estimators=500, random_state=42)
-    rf_raw.fit(X_train, y_train)
-    
-    # 4. Calibrate probabilities using isotonic regression (5-fold CV)
-    print("Calibrating probabilities with CalibratedClassifierCV (isotonic)...")
-    calibrated_model = CalibratedClassifierCV(rf_raw, method='isotonic', cv=5)
-    calibrated_model.fit(X_train, y_train)
-    
-    # Validate: compare raw vs calibrated accuracy on test set
-    raw_preds = rf_raw.predict(X_test)
-    cal_preds = calibrated_model.predict(X_test)
-    raw_accuracy = accuracy_score(y_test, raw_preds)
-    cal_accuracy = accuracy_score(y_test, cal_preds)
-    print(f"\nRaw RF Accuracy:        {raw_accuracy:.4f}")
-    print(f"Calibrated RF Accuracy: {cal_accuracy:.4f}")
-    
-    # 5. Accept Single Flow Input
-    if not os.path.exists(SINGLE_FLOW_INPUT):
-        print(f"Error: Single flow file not found at {SINGLE_FLOW_INPUT}")
-        return
+        # 2. Load Artifacts
+        scaler, le, rf_model, anomaly_detector, feature_names = load_artifacts(artifacts_dir)
+        class_names = le.classes_
         
-    print(f"\nProcessing single flow from {SINGLE_FLOW_INPUT}...")
-    X_single_scaled = preprocess_single_flow(SINGLE_FLOW_INPUT, scaler, feature_names)
-    
-    # 6. Predict with dual probability capture (raw vs calibrated)
-    raw_probs = rf_raw.predict_proba(X_single_scaled)[0]
-    raw_confidence = raw_probs.max() * 100
-    
-    cal_probs = calibrated_model.predict_proba(X_single_scaled)[0]
-    prediction_idx = cal_probs.argmax()
-    predicted_class = class_names[prediction_idx]
-    confidence_score = cal_probs.max() * 100  # Calibrated confidence
-    
-    # 7. Confidence level interpretation
-    if confidence_score >= 85.0:
-        confidence_level = "High"
-    elif confidence_score >= 70.0:
-        confidence_level = "Medium"
-    else:
-        confidence_level = "Low"
-    
-    # 8. Anomaly Detection (post-prediction novelty detection layer)
-    anomaly_result = compute_anomaly_score(anomaly_model, X_single_scaled)
-    is_anomaly = anomaly_result["is_anomaly"]
-    anomaly_score = anomaly_result["anomaly_score"]
-    anomaly_status = "Anomalous" if is_anomaly else "Normal"
-    
+        # Try to load calibrated model if it exists
+        calibrated_model_path = os.path.join(artifacts_dir, 'rf_model_calibrated.pkl')
+        calibrated_model = None
+        if os.path.exists(calibrated_model_path):
+            print(f"Loading calibrated model from {calibrated_model_path}...")
+            calibrated_model = joblib.load(calibrated_model_path)
+        
+        # Determine which model to use for final decision
+        if calibrated_model:
+            main_model = calibrated_model
+            model_type = "Calibrated RF"
+        else:
+            print("Calibrated model not found. Using raw RF model (confidence scores may be uncalibrated).")
+            main_model = rf_model
+            model_type = "Raw RF"
+        
+        # 3. Accept Single Flow Input
+        if not os.path.exists(SINGLE_FLOW_INPUT):
+            print(f"Error: Single flow file not found at {SINGLE_FLOW_INPUT}")
+            return
+            
+        print(f"\nProcessing single flow from {SINGLE_FLOW_INPUT}...")
+        X_single_scaled = preprocess_single_flow(SINGLE_FLOW_INPUT, scaler, feature_names)
+        
+        # 4. Predict & Confirm Diagnostics
+        # Get raw confidence (from original RF)
+        raw_probs = rf_model.predict_proba(X_single_scaled)[0]
+        raw_confidence = raw_probs.max() * 100
+        
+        # Get calibrated confidence and class probabilities
+        if calibrated_model:
+            calibrated_probs = calibrated_model.predict_proba(X_single_scaled)[0]
+            confidence_score = calibrated_probs.max() * 100
+            final_probs = calibrated_probs
+        else:
+            confidence_score = raw_confidence
+            final_probs = raw_probs
+            
+        prediction_idx = final_probs.argmax()
+        predicted_class = class_names[prediction_idx]
+        
+        # 5. Confidence Level
+        if confidence_score >= 85.0:
+            confidence_level = "High"
+        elif confidence_score >= 70.0:
+            confidence_level = "Medium"
+        else:
+            confidence_level = "Low"
+            
+        # 6. Anomaly Detection
+        anomaly_result = compute_anomaly_score(anomaly_detector, X_single_scaled)
+        is_anomaly = anomaly_result["is_anomaly"]
+        anomaly_score = anomaly_result["anomaly_score"]
+        anomaly_status = "Anomalous" if is_anomaly else "Normal"
+        
+        # 7. Final Decision Logic
+        if confidence_score < 70.0 and is_anomaly:
+            final_decision = "Unknown / Suspicious Traffic"
+        elif confidence_score < 70.0:
+            final_decision = "Low Confidence Prediction"
+        elif is_anomaly:
+            final_decision = "Possible Novel Behaviour"
+        else:
+            final_decision = predicted_class
+            
+        # 8. Risk Assessment
+        risk_assessment = assess_risk(predicted_class, confidence_score)
+        
+        # 9. Attack Explanation
+        explanation = explain_attack(predicted_class)
+        
+        # 10. Generate Output
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        output_lines = []
+        output_lines.append("=" * 46)
+        output_lines.append(" NIDS ALERT ")
+        output_lines.append("=" * 46)
+        output_lines.append(f"Detected Traffic Type : {predicted_class}")
+        output_lines.append("")
+        output_lines.append("--- Risk Assessment ---")
+        output_lines.append("")
+        output_lines.append(f"Model Confidence      : {confidence_score:.2f}% ({confidence_level})")
+        output_lines.append(f"Risk Level            : {risk_assessment['risk_level']}")
+        output_lines.append(f"Priority              : {risk_assessment['priority']}")
+        output_lines.append("")
+        output_lines.append("--- Confidence Diagnostics ---")
+        output_lines.append("")
+        output_lines.append("Class Probabilities (Calibrated):")
+        
+        # Add class probabilities
+        for i, class_name in enumerate(class_names):
+            prob = final_probs[i] * 100
+            output_lines.append(f"  {class_name:<20}: {prob:.1f}%")
+        
+        output_lines.append("")
+        output_lines.append(f"Raw Confidence        : {raw_confidence:.1f}%")
+        output_lines.append(f"Calibrated Confidence : {confidence_score:.1f}%")
+        output_lines.append(f"Confidence Level      : {confidence_level}")
+        output_lines.append("")
+        output_lines.append(f"Anomaly Status        : {anomaly_status} (Score: {anomaly_score:.2f})")
+        output_lines.append(f"Final Decision        : {final_decision}")
+        output_lines.append(f"Timestamp             : {timestamp}")
+        output_lines.append("=" * 46)
+        
+        # Additional Details
+        output_lines.append("\n--- Action Plan ---")
+        output_lines.append(f"Description: {explanation['description']}")
+        output_lines.append("What is happening:")
+        output_lines.append(f"{explanation['happening']}")
+        output_lines.append(f"Recommended: {risk_assessment['recommended_action']}")
+        output_lines.append(f"Do: {explanation['to_do']}")
+        output_lines.append(f"Don't: {explanation['not_to_do']}")
+        output_lines.append("-" * 50 + "\n")
+        
+        output_text = "\n".join(output_lines)
+        
+        # Console Output
+        print("\n" + output_text)
+        
+        # 11. Logging
+        log_file = os.path.join(output_dir, 'nids_alert.txt')
+        with open(log_file, 'w') as f: 
+            f.write("\n" + output_text + "\n")
 
-    # 9. Novelty Detection Decision Logic
-    # Combines classifier confidence with anomaly detection for robust decision
-    if confidence_score < 70.0 and is_anomaly:
-        final_decision = "Unknown / Suspicious Traffic"
-    elif confidence_score < 70.0:
-        final_decision = "Low Confidence Prediction"
-    elif is_anomaly:
-        final_decision = "Possible Novel Behaviour"
-    else:
-        final_decision = predicted_class  # Normal predicted class
-    
-    # 10. Assess Risk (post-prediction decision-support layer)
-    risk_assessment = assess_risk(predicted_class, confidence_score)
-    
-    # 11. Explain Attack (existing logic)
-    explanation = explain_attack(predicted_class)
-    
-    # 12. Output
-    output_lines = []
-    output_lines.append("=" * 50)
-    output_lines.append("  NETWORK INTRUSION DETECTION ALERT  ")
-    output_lines.append("=" * 50)
-    output_lines.append(f"\nDetected Traffic Type: {predicted_class}")
-    
-    output_lines.append("\n--- Attack Explanation ---")
-    output_lines.append(f"\nDescription:\n{explanation['description']}")
-    output_lines.append(f"\nWhat is happening:\n{explanation['happening']}")
-    output_lines.append(f"\nWhat to do:\n{explanation['to_do']}")
-    output_lines.append(f"\nWhat NOT to do:\n{explanation['not_to_do']}")
-    
-    output_lines.append("\n--- Risk Assessment ---")
-    output_lines.append(f"\nModel Confidence: {risk_assessment['confidence']:.1f}%")
-    output_lines.append(f"Risk Level: {risk_assessment['risk_level']}")
-    output_lines.append(f"Priority: {risk_assessment['priority']}")
-    output_lines.append(f"Recommended Action: {risk_assessment['recommended_action']}")
-    
-    output_lines.append("\n--- Confidence Diagnostics ---")
-    output_lines.append("\nClass Probabilities (Calibrated):")
-    for i, cls_name in enumerate(class_names):
-        output_lines.append(f"  {cls_name}: {cal_probs[i] * 100:.1f}%")
-    output_lines.append(f"\nRaw Confidence (before calibration): {raw_confidence:.1f}%")
-    output_lines.append(f"Calibrated Confidence: {confidence_score:.1f}%")
-    output_lines.append(f"Confidence Level: {confidence_level}")
-    
-    output_lines.append("\n--- Calibration Validation ---")
-    output_lines.append(f"\nRaw RF Test Accuracy:        {raw_accuracy:.4f}")
-    output_lines.append(f"Calibrated RF Test Accuracy: {cal_accuracy:.4f}")
-    
-    output_lines.append("\n--- Novelty Detection ---")
-    output_lines.append(f"\nModel Confidence: {confidence_score:.1f}%")
-    output_lines.append(f"Anomaly Status: {anomaly_status}")
-    output_lines.append(f"Anomaly Score: {anomaly_score:.4f}")
-    output_lines.append(f"Final Decision: {final_decision}")
-    output_lines.append("=" * 50)
-    
-    # Print to console
-    output_text = "\n".join(output_lines)
-    print("\n" + output_text)
-    
-    # Save to file
-    output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'outputs'))
-    os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, 'alert_output.txt')
-    with open(output_file, 'w') as f:
-        f.write(output_text)
-    print(f"\nOutput saved to: {output_file}")
+        print(f"\nAlert logged to: {log_file}")
+        
+    except Exception as e:
+        print(f"[ERROR] Inference failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()

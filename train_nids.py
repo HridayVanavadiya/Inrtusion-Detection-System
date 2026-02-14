@@ -9,10 +9,19 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 from xgboost import XGBClassifier
+from sklearn.calibration import CalibratedClassifierCV
 import time
+import joblib
+import os
+import sys
+
+# Add current directory to path to import explainability if needed from same level
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from explainability.anomaly_detector import train_anomaly_detector
 
 # --- Configuration ---
 DATASET_PATH = r"C:\Users\hrida\OneDrive\Desktop\major project\Dataset\Own Dataset\NIDS_FINAL_DATASET.csv"
+ARTIFACTS_DIR = "artifacts"
 RANDOM_SEED = 42
 TEST_SIZE = 0.2
 
@@ -76,7 +85,10 @@ def load_and_preprocess_data(filepath):
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    return X_train_scaled, X_test_scaled, y_train, y_test, class_names
+    # Get feature names for persistence
+    feature_names = X.columns.tolist()
+    
+    return X_train_scaled, X_test_scaled, y_train, y_test, class_names, scaler, le, feature_names
 
 def train_eval_rf(X_train, X_test, y_train, y_test, class_names):
     print("\n--- Random Forest ---")
@@ -202,23 +214,52 @@ import sys
 def main():
     # Redirect stdout to a file
     original_stdout = sys.stdout
-    with open('nids_results.txt', 'w') as f:
+    with open('outputs/nids_results.txt', 'w') as f:
         sys.stdout = f
         try:
-            X_train, X_test, y_train, y_test, class_names = load_and_preprocess_data(DATASET_PATH)
+            # Create artifacts directory if it doesn't exist
+            os.makedirs(ARTIFACTS_DIR, exist_ok=True)
             
-            train_eval_rf(X_train, X_test, y_train, y_test, class_names)
+            X_train, X_test, y_train, y_test, class_names, scaler, le, feature_names = load_and_preprocess_data(DATASET_PATH)
+            
+            # Save Preprocessing Artifacts
+            print(f"Saving preprocessing artifacts to {ARTIFACTS_DIR}...")
+            joblib.dump(scaler, os.path.join(ARTIFACTS_DIR, 'scaler.pkl'))
+            joblib.dump(le, os.path.join(ARTIFACTS_DIR, 'label_encoder.pkl'))
+            joblib.dump(feature_names, os.path.join(ARTIFACTS_DIR, 'feature_names.pkl'))
+            
+            # Train and Save Anomaly Detector
+            print("Training Anomaly Detector...")
+            anomaly_detector = train_anomaly_detector(X_train, y_train, class_names)
+            joblib.dump(anomaly_detector, os.path.join(ARTIFACTS_DIR, 'anomaly_detector.pkl'))
+            
+            # Train Models
+            rf_model = train_eval_rf(X_train, X_test, y_train, y_test, class_names)
+            # Save Raw Random Forest Model
+            print(f"Saving Random Forest model to {ARTIFACTS_DIR}...")
+            joblib.dump(rf_model, os.path.join(ARTIFACTS_DIR, 'rf_model.pkl'))
+            
+            # Train and Save Calibrated Model (for inference consistency)
+            print("Training Calibrated Classifier (Isotonic)...")
+            calibrated_rf = CalibratedClassifierCV(rf_model, method='isotonic', cv=5)
+            calibrated_rf.fit(X_train, y_train)
+            joblib.dump(calibrated_rf, os.path.join(ARTIFACTS_DIR, 'rf_model_calibrated.pkl'))
+            print(f"Saving Calibrated RF model to {ARTIFACTS_DIR}...")
+            
             train_eval_xgb(X_train, X_test, y_train, y_test, class_names)
             train_eval_lstm(X_train, X_test, y_train, y_test, class_names)
             train_eval_transformer(X_train, X_test, y_train, y_test, class_names)
             
         except Exception as e:
             print(f"An error occurred: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             sys.stdout = original_stdout # Restore stdout just in case
     
     # Print to console as well to confirm completion
     print("Training complete. Results saved to nids_results.txt")
+    print(f"Artifacts saved to {os.path.abspath(ARTIFACTS_DIR)}")
 
 if __name__ == "__main__":
     main()
